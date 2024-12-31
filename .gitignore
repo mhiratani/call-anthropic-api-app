@@ -1,0 +1,62 @@
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.env
+
+# 仮想環境
+venv/
+env/
+ENV/
+.venv
+.env
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ログファイル
+*.log
+
+# ローカルデータベース
+*.db
+*.sqlite3
+
+# キャッシュディレクトリ
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# temp files
+*.tmp
+*.temp
+
+# Jupyter Notebook
+.ipynb_checkpoints
