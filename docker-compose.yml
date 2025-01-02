@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8510:8510"
+    environment:
+      PORT: 8510
+    volumes:
+      - .:/app
