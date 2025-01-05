@@ -3,6 +3,8 @@ import anthropic
 from anthropic.types.text_block import TextBlock
 from dataclasses import dataclass
 from typing import Dict, Union, List, Any
+import json
+import os
 import re
 import traceback
 import bcrypt
@@ -148,13 +150,14 @@ def send_otp_email(email, otp):
     message = MIMEMultipart()
     message["From"] = sender_email
     message["To"] = email
-    message["Subject"] = "ひらたに🐈️ま謹製、生成AIと遊ぶAppの認証コード"
+    message["Subject"] = "ひらたに🐈️ま謹製、生成AIと遊ぶWebAppの認証コード"
 
     body = f"""
-    以下が認証コードになります。認証コードの項目に入力してね：
+    以下認証コードです。認証コードの項目に入力してね：
+
     {otp}
-    このコードは5分間有効です。
-    心当たりのないメールの場合は無視してください。
+
+    ※このコードは5分間有効です。
     """
 
     message.attach(MIMEText(body, "plain"))
@@ -176,6 +179,9 @@ def generate_otp():
 
 def check_password():
     """パスワードとメールOTPチェックを行う関数"""
+    # 最初に初期化
+    if "stored_username" not in st.session_state:  # ← キー名を変更！
+        st.session_state.stored_username = ""
 
     # ログイン状態のチェック
     if "authentication_status" in st.session_state and st.session_state["authentication_status"]:
@@ -210,6 +216,7 @@ def check_password():
 
         if submit_button:
             if credentials_entered():
+                st.session_state.stored_username = st.session_state.username  # text_inputの値を別のキーで保存
                 placeholder.empty()  # 認証成功時のみフォームを消去
                 return True
             else:
@@ -240,7 +247,7 @@ def get_response(user_input):
     message = client.messages.create(
         model="claude-3-5-sonnet-20241022",
         max_tokens=5140,
-        system=st.session_state.system_context,
+        system=st.session_state.system_prompt,
         messages=conversation_history  # 会話履歴を含める
     )
     return message.content
@@ -249,6 +256,179 @@ def get_response(user_input):
 class TextBlock:
     text: str
     type: str
+
+class ChatHistoryManager:
+    def __init__(self, username: str):
+        self.username = username
+        self.base_dir = "chat_histories"
+        self.user_dir = f"{self.base_dir}/{username}"
+        os.makedirs(self.user_dir, exist_ok=True)
+
+    def save_chat(self, chat_id: str, messages: List[Dict], title: str = None):
+        """チャット履歴を保存"""
+        if not title:
+            # 最初の会話から自動でタイトルを生成
+            first_message = next((m for m in messages if m["role"] == "user"), None)
+            title = first_message["content"][:20] + "..." if first_message else "無題の会話"
+
+        chat_data = {
+            "title": title,
+            "timestamp": datetime.now().isoformat(),
+            "messages": messages
+        }
+
+        file_path = f"{self.user_dir}/{chat_id}.json"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_data, f, ensure_ascii=False)
+
+    def load_chat(self, chat_id: str) -> Dict:
+        try:
+            file_path = f"{self.user_dir}/{chat_id}.json"
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    loaded_data = json.load(f)
+
+                    # messagesキーがある場合とない場合で分岐
+                    messages_to_process = loaded_data.get("messages", loaded_data)
+                    if not isinstance(messages_to_process, list):
+                        st.error("メッセージデータが正しい形式ではありません")
+                        return None
+
+                    # メッセージを適切な形式に変換
+                    formatted_messages = []
+                    for msg in messages_to_process:
+                        formatted_msg = {
+                            'role': msg.get('role', 'unknown'),
+                            'content': msg.get('content', ''),
+                            'type': 'markdown' if msg.get('role') == 'assistant' else 'text',
+                            'timestamp': msg.get('timestamp', '')
+                        }
+                        formatted_messages.append(formatted_msg)
+
+                    return {"messages": formatted_messages}  # 辞書形式で返す
+            return None
+        except Exception as e:
+            st.error(f"予期せぬエラー: {str(e)}")
+            st.error(f"エラーの詳細: {type(e).__name__}")
+            return None
+
+    def list_chats(self) -> List[Dict]:
+        """ユーザーの全チャット履歴をリスト化"""
+        chats = []
+        try:
+            for file_name in os.listdir(self.user_dir):
+                if file_name.endswith('.json'):
+                    try:
+                        file_path = f"{self.user_dir}/{file_name}"
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            chat_data = json.load(f)
+
+                        chat_id = file_name.replace('.json', '')
+
+                        # タイトルの整形（長すぎる場合は省略）
+                        title = chat_data.get("title", "")
+
+                        # タイムスタンプの整形
+                        timestamp = chat_data.get("timestamp", "")
+                        if timestamp:
+                            try:
+                                # タイムスタンプを日付形式に変換（必要に応じて）
+                                dt = datetime.fromisoformat(timestamp)
+                                formatted_time = dt.strftime("%Y-%m-%d %H:%M")
+                            except:
+                                formatted_time = timestamp
+                        else:
+                            formatted_time = "不明"
+
+                        chats.append({
+                            "id": chat_id,
+                            "title": title or "無題の会話",
+                            "timestamp": timestamp,  # ソート用に元のタイムスタンプを保持
+                            "formatted_time": formatted_time  # 表示用
+                        })
+                    except Exception as e:
+                        st.warning(f"ファイル {file_name} の読み込みをスキップ: {str(e)}")
+                        continue
+
+            # 新しい順にソート
+            return sorted(chats, key=lambda x: x["timestamp"] or "", reverse=True)
+
+        except Exception as e:
+            st.error(f"履歴一覧の取得中にエラー: {str(e)}")
+            return []
+
+def init_chat_history():
+    """チャット履歴の初期化"""
+    if 'history_manager' not in st.session_state:
+        username = st.session_state.get('username', 'default_user')
+        # 履歴保存用ディレクトリの作成を確実に
+        base_dir = "chat_histories"
+        user_dir = f"{base_dir}/{username}"
+        os.makedirs(user_dir, exist_ok=True)
+        st.session_state.history_manager = ChatHistoryManager(username)
+    if 'current_chat_id' not in st.session_state:
+        st.session_state.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def add_chat_history_ui():
+    """チャット履歴UIの追加"""
+    with st.sidebar:
+        st.divider()
+        st.markdown("### 💭 会話履歴")
+        # 新規チャット開始ボタン
+        if st.button("✨ 新しい会話を開始"):
+            st.session_state.messages = []
+            st.session_state.current_chat_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            st.rerun()
+        # 過去の会話一覧
+        chats = st.session_state.history_manager.list_chats()
+        for chat in chats:
+            chat_title = f"{chat['title']} ({chat['timestamp'][:10]})"
+            if st.button(chat_title, key=f"chat_{chat['id']}"):
+                chat_data = st.session_state.history_manager.load_chat(chat['id'])
+                if chat_data:
+                    st.session_state.messages = chat_data["messages"]
+                    st.session_state.current_chat_id = chat['id']
+                    st.rerun()
+
+def save_current_chat():
+    """現在の会話を保存"""
+    if hasattr(st.session_state, 'messages') and st.session_state.messages:
+        try:
+            # メッセージを保存可能な形式に変換
+            serializable_messages = []
+            for msg in st.session_state.messages:
+                content = msg.get('content', '')
+                # TextBlockオブジェクトの場合の処理を追加
+                if hasattr(content, 'text'):  # TextBlockオブジェクトの場合
+                    content = content.text
+                elif isinstance(content, list) and all(hasattr(item, 'text') for item in content):
+                    # TextBlockのリストの場合
+                    content = ' '.join(item.text for item in content)
+                elif isinstance(content, str) and "TextBlock" in content:
+                    # 文字列として保存されたTextBlockの場合
+                    import re
+                    text_match = re.search(r"text='(.*?)'", content)
+                    if text_match:
+                        content = text_match.group(1)
+
+                cleaned_msg = {
+                    'role': msg.get('role'),
+                    'content': str(content),  # 確実に文字列に変換
+                    'timestamp': msg.get('timestamp', ''),
+                }
+                serializable_messages.append(cleaned_msg)
+
+            # 保存処理
+            st.session_state.history_manager.save_chat(
+                st.session_state.current_chat_id,
+                serializable_messages
+            )
+        except Exception as e:
+            st.write(f"エラー発生しちゃった！😱: {str(e)}")
+            import traceback
+            st.write("詳細なエラー情報:")
+            st.code(traceback.format_exc())
 
 class ResponseParser:
     @staticmethod
@@ -323,9 +503,9 @@ def main():
         initial_sidebar_state="collapsed"
     )
 
-    # system_contextの初期化
-    if 'system_context' not in st.session_state:
-        st.session_state.system_context = DEFAULT_SYSTEM_CONTEXT
+    # system_promptの初期化
+    if 'system_prompt' not in st.session_state:
+        st.session_state.system_prompt = DEFAULT_SYSTEM_PROMPT
 
     # 認証チェック
     if check_password():
@@ -334,6 +514,11 @@ def main():
     else:
         # 認証失敗時は何もせずに終了
         st.stop()
+
+# メッセージ送信時の処理
+def on_send_click():
+    handle_message_submission()
+    save_current_chat()
 
 def handle_message_submission():
     """メッセージ送信の処理を行う関数"""
@@ -345,15 +530,18 @@ def handle_message_submission():
     # ユーザーメッセージを追加
     st.session_state.messages.append({
         "role": "user",
-        "content": user_message
+        "content": user_message,
+        "timestamp": datetime.now().isoformat()
     })
 
     # AIレスポンスを取得
     try:
-        ai_content = get_response(user_message)
+        assistant_content = get_response(user_message)
         st.session_state.messages.append({
-            "role": "ai",
-            "content": ai_content
+            "role": "assistant",
+            "content": assistant_content,
+            "timestamp": datetime.now().isoformat()
+
         })
     except Exception as e:
         st.error(f"エラーが発生しました: {str(e)}")
@@ -361,18 +549,23 @@ def handle_message_submission():
     # 入力をクリア
     st.session_state.user_input = ""
 
-    # 画面を更新
-    st.rerun()
-
 def display_main_app():
     """メインアプリケーションの表示処理"""
     st.title("💬 Call Anthropic Api App")
+
+    # 認証済みのユーザー名を表示
+    st.sidebar.markdown(f"👤 ログインユーザー: {st.session_state.stored_username}")
+
+    # チャット履歴の初期化
+    init_chat_history()
+
     # セッションステート初期化
     if 'messages' not in st.session_state:
         st.session_state.messages = []
     
     if len(st.session_state.messages) > MAX_HISTORY:
         st.session_state.messages = st.session_state.messages[-MAX_HISTORY:]
+        save_current_chat()
 
     # サイドバーにコントロールを配置
     with st.sidebar:
@@ -391,31 +584,23 @@ def display_main_app():
         )
 
         if st.button("プリセットを適用"):
-            st.session_state.system_context = system_presets[selected_preset]
+            st.session_state.system_prompt = system_presets[selected_preset]
             st.success(f"{selected_preset}のプリセットを適用しました")
 
-        # デフォルト設定に戻すボタン
-        if st.button("デフォルト設定に戻す"):
-            st.session_state.system_context = DEFAULT_SYSTEM_CONTEXT
-            st.success("システムコンテキストをデフォルトに戻しました")
-
-        # システムコンテキストの編集エリア
-        new_system_context = st.text_area(
-            "システムコンテキスト:",
-            value=st.session_state.system_context,
+        # システムプロンプトの編集エリア
+        new_system_prompt = st.text_area(
+            "システムプロンプト:",
+            value=st.session_state.system_prompt,
             height=200
         )
 
-        # システムコンテキストの更新ボタン
-        if st.button("システムコンテキストを更新"):
-            st.session_state.system_context = new_system_context
-            st.success("システムコンテキストを更新しました")
+        # システムプロンプトの更新ボタン
+        if st.button("システムプロンプトを更新"):
+            st.session_state.system_prompt = new_system_prompt
+            st.success("システムプロンプトを更新しました")
 
-        st.divider()
-
-        if st.button("🗑️ 会話履歴をクリア"):
-            st.session_state.messages = []
-            st.rerun()
+        # チャット履歴UIを追加
+        add_chat_history_ui()
 
     # メッセージ入力領域
     with st.container():
@@ -423,7 +608,7 @@ def display_main_app():
             "メッセージを入力してください:",
             key="user_input",
             height=100,
-            placeholder="教えてほしいことをにゅうりょくしよう！！サイドバーからシステムコンテキストも修正できるぞ！プリセットを選択後、「プリセットを適用」ボタンを忘れずに押してな！！",  # プレースホルダーを追加
+            placeholder="教えてほしいことをにゅうりょくしよう！！サイドバーからシステムプロンプトも修正できるぞ！プリセットを選択後、「プリセットを適用」ボタンを忘れずに押してな！！",  # プレースホルダーを追加
         )
 
         # 送信ボタンのレイアウト
@@ -432,7 +617,7 @@ def display_main_app():
             st.button(
                 "送信",
                 use_container_width=True,
-                on_click=handle_message_submission
+                on_click=on_send_click
             )
 
     # メッセージ履歴の表示
@@ -442,7 +627,6 @@ def display_main_app():
                 message, 
                 is_user=(message["role"] == "user")
             )
-            st.divider()
 
 if __name__ == "__main__":
     main()

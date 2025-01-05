@@ -48,6 +48,9 @@ venv.bak/
 *.db
 *.sqlite3
 
+# 履歴ファイル
+chat_histories/
+
 # キャッシュディレクトリ
 .cache/
 .pytest_cache/
