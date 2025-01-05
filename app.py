@@ -498,7 +498,8 @@ def main():
     st.set_page_config(
         page_title="Call Anthropic Api App",
         layout="wide",
-        initial_sidebar_state="collapsed"
+        initial_sidebar_state="collapsed",
+        page_icon="img/favicon_ca3.png"
     )
 
     # system_promptの初期化
